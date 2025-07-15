@@ -39,11 +39,12 @@ class GRPOScriptArguments(ScriptArguments):
         reward_funcs (`list[str]`):
             List of reward functions. Possible values: 'accuracy', 'format'.
     """
-
+    #reward_funcs stores a list of reward function
     reward_funcs: list[str] = field(
         default_factory=lambda: ["accuracy", "format"],
         metadata={"help": "List of reward functions. Possible values: 'accuracy', 'format'"},
     )
+    #
     max_pixels: Optional[int] = field(
         default=12845056,
         metadata={"help": "Maximum number of pixels for the image"},
@@ -52,6 +53,7 @@ class GRPOScriptArguments(ScriptArguments):
         default=3136,
         metadata={"help": "Minimum number of pixels for the image"},
     )
+    #decide if we use the temporal
     temporal: Optional[bool] = field(
         default=True,
         metadata={"help": "whether using temporal GRPO"},
@@ -66,59 +68,72 @@ class GRPOScriptArguments(ScriptArguments):
 def accuracy_reward(completions, solution, **kwargs):
     
     def extract_answer(text):
-        pattern = r'<answer>\s*(.*?)\s*</answer>'
-        match = re.search(pattern, text, re.DOTALL)
+        pattern = r'<answer>\s*(.*?)\s*</answer>' #this answer pattern
+        match = re.search(pattern, text, re.DOTALL) #searches for the first match of the pattern in the entire text.
         if match:
-            return match.group(1).strip()
+            return match.group(1).strip() #remove leading and trailing whitespace, so we get the first clean context inside the pattern
         return ""
 
     def normalize_number(num_str):
         try:
-            num_str = num_str.replace(',', '')
+            num_str = num_str.replace(',', '') #e.g. converts "1,000" to "1000"
             return float(num_str)
         except Exception as e:
             print(f"Error converting '{num_str}' to float: {e}")
             return None
 
     def wer(reference, hypothesis):
-        ref_words = reference.split()
-        hyp_words = hypothesis.split()
-        m = len(ref_words)
-        n = len(hyp_words)
-        d = [[0]*(n+1) for _ in range(m+1)]
+        """
+        compute word error rate(WER)
+        measure difference between a reference and a hypothesis
+        they use Levenshtein distance
+        https://en.wikipedia.org/wiki/Levenshtein_distance
+        WER = (S+D+I)/N
+        """
+        ref_words = reference.split() #string to list
+        hyp_words = hypothesis.split() #string to list
+        m = len(ref_words) #length of ref
+        n = len(hyp_words) #length of n
+        d = [[0]*(n+1) for _ in range(m+1)] # d is (m + 1) * (n + 1) matrix
         for i in range(m+1):
-            d[i][0] = i
+            d[i][0] = i #prepare deletions
         for j in range(n+1):
-            d[0][j] = j
+            d[0][j] = j #prepare insertions
+        #levenshtein distance
+        #tail of some string x is a string of all but the first character
         for i in range(1, m+1):
             for j in range(1, n+1):
                 if ref_words[i-1] == hyp_words[j-1]:
-                    d[i][j] = d[i-1][j-1]
+                    d[i][j] = d[i-1][j-1] # if the head is the same, the distance is lev distance of the following distance
                 else:
-                    d[i][j] = 1 + min(d[i-1][j], d[i][j-1], d[i-1][j-1])
-        return d[m][n] / max(1, m)
+                    d[i][j] = 1 + min(d[i-1][j], d[i][j-1], d[i-1][j-1]) # if the head is different, distance is 1 plus min of (tail(a), b), (a, tail(b), and tail(a), tail(b))
+        return d[m][n] / max(1, m) #normalized by reference length
 
 
     def compute_rouge_score(reference, hypothesis, use_stemmer=True):
-        scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=use_stemmer)
+        """
+        computer rouge score between reference and hypothesis
+        https://en.wikipedia.org/wiki/ROUGE_(metric)
+        """
+        scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=use_stemmer) #use rouge score calculator
         scores = scorer.score(reference, hypothesis)
         average_fmeasure = (scores['rouge1'].fmeasure + scores['rouge2'].fmeasure + scores['rougeL'].fmeasure) / 3
         return average_fmeasure
     
 
-    question_type = kwargs['problem_type'][0]
+    question_type = kwargs['problem_type'][0] #
     
-    contents = [completion[0]["content"] for completion in completions]
+    contents = [completion[0]["content"] for completion in completions] #get content
     current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
     rewards = []
 
     for content, sol in zip(contents, solution):
     
         try:
-            output_ans = extract_answer(content)
-            gt_ans = extract_answer(sol)
+            output_ans = extract_answer(content) #get answer from generation
+            gt_ans = extract_answer(sol) #get answer from the  solution
             if question_type == "multiple choice":
-                reward = 1.0 if output_ans.strip() == gt_ans.strip() else 0.0
+                reward = 1.0 if output_ans.strip() == gt_ans.strip() else 0.0 #for multiple answer, we get the correct answer, reward is 1, else 0
             elif question_type == "numerical":
                 gt_has_decimal = ("." in gt_ans) or ("," in gt_ans)
                 out_has_decimal = ("." in output_ans) or ("," in output_ans)
@@ -130,13 +145,14 @@ def accuracy_reward(completions, solution, **kwargs):
                     if gt_number is None or out_number is None:
                         reward = 0.0
                     else:
-                        reward = 1.0 if round(gt_number, 2) == round(out_number, 2) else 0.0
-            elif question_type == "OCR":
-                error_rate = wer(gt_ans, output_ans)
+                        reward = 1.0 if round(gt_number, 2) == round(out_number, 2) else 0.0 #reward 1 only if the number is same as out number , rou
+                        #question: why round,  like 3.145 = 3.146?
+            elif question_type == "OCR": #optical character recognition
+                error_rate = wer(gt_ans, output_ans) #calculate word error rate
                 reward = 1 - error_rate
                 reward = max(0.0, min(1.0, reward))
             elif question_type == "free-form":
-                score = compute_rouge_score(gt_ans, output_ans)
+                score = compute_rouge_score(gt_ans, output_ans) #automatic metric to evaluate overlap between free-form answer and reference
                 reward = max(0.0, min(1.0, score))
             elif question_type == "regression":
                 gt_number = normalize_number(gt_ans)
@@ -145,16 +161,16 @@ def accuracy_reward(completions, solution, **kwargs):
                     reward = 0.0
                 rel_diff = (abs(out_number - gt_number) + 1e-9) / (abs(gt_number) + 1e-9)
                 rel_diff = min(1.0, max(0.0, rel_diff))
-                reward = 1 - rel_diff
+                reward = 1 - rel_diff #reward = 1 - difference
             else:
                 reward = 0.0
         except Exception as e:
             print(f"Error in reward_fn for question_type '{question_type}': {e}")
-            reward = 0.0
+            reward = 0.0 #error reward
     
         rewards.append(reward)
         
-        if os.getenv("DEBUG_MODE") == "true":
+        if os.getenv("DEBUG_MODE") == "true": #print content, reward, and solution
             log_path = os.getenv("LOG_PATH")
             # local_rank = int(os.getenv("LOCAL_RANK", 0))
             with open(log_path, "a", encoding="utf-8") as f:
@@ -170,7 +186,7 @@ def format_reward(completions, **kwargs):
     pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
     completion_contents = [completion[0]["content"] for completion in completions]
     matches = [re.fullmatch(pattern, content, re.DOTALL) for content in completion_contents]
-    return [1.0 if match else 0.0 for match in matches]
+    return [1.0 if match else 0.0 for match in matches] #reward 1 if format match
 
 
 reward_funcs_registry = {
@@ -189,7 +205,7 @@ SYSTEM_PROMPT = (
 def main(script_args, training_args, model_args):
     # Get reward functions
     reward_funcs = [reward_funcs_registry[func] for func in script_args.reward_funcs]
-
+    # load dataset
     if script_args.dataset_name.endswith('.json') or script_args.dataset_name.endswith('.jsonl'):
         dataset =  DatasetDict({"train": Dataset.from_json(script_args.dataset_name)})
     else:
@@ -214,7 +230,7 @@ def main(script_args, training_args, model_args):
         "It's encouraged to include self-reflection or verification in the reasoning process. "
         "Provide your detailed reasoning between the <think> </think> tags, and then give your final answer between the <answer> </answer> tags."
     )
-
+    #for making conversation, the user will ask the following text corresponding to the problem type
     TYPE_TEMPLATE = {
         "multiple choice": " Please provide only the single option letter (e.g., A, B, C, D, etc.) within the <answer> </answer> tags.",
         "numerical": " Please provide the numerical value (e.g., 42 or 3.14) within the <answer> </answer> tags.",
@@ -279,10 +295,10 @@ def main(script_args, training_args, model_args):
         
         return msg
 
-    
+    #convert the dataset into a chat prompt format
     dataset = dataset.map(make_conversation_image_and_video)
 
-    
+    #define trainer
     trainer_cls = Qwen2VLGRPOTrainer if not training_args.use_vllm else Qwen2VLGRPOVLLMTrainerModified
     print("using: ", trainer_cls)
 

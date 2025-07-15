@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/flash-attention" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/flash-attention/csrc/composable_kernel" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/flash-attention/csrc/cutlass" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/src/r1-v/Video-R1-data" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/src/r1-v/eval_results/Video-R1-eval" vcs="Git" />
+  </component>
+</project>
